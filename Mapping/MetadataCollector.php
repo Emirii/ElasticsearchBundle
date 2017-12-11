@@ -77,7 +77,13 @@ class MetadataCollector
                 $name = $bundleConfig;
                 $bundleConfig = [];
             }
-            $mappings = $this->getBundleMapping($name, $bundleConfig);
+
+            try {
+                $class = new $name();
+                $mappings = $this->getClassMapping($class, $bundleConfig);
+            } catch (\Exception $exception) {
+                $mappings = $this->getBundleMapping($name, $bundleConfig);
+            }
 
             $alreadyDefinedTypes = array_intersect_key($mappings, $output);
             if (count($alreadyDefinedTypes)) {
@@ -92,6 +98,49 @@ class MetadataCollector
         }
 
         return $output;
+    }
+
+    /**
+     * Verifies the class is a Document and tries to read them.
+     *
+     * @param object $class Document class
+     * @param array $config Bundle configuration
+     *
+     * @return array Empty array on containing zero documents.
+     */
+    public function getClassMapping($class, $config = [])
+    {
+        $name = get_class($class);
+
+        $mappings = [];
+
+        $cacheName =  'ongr.metadata.mapping.' . md5($name.serialize($config));
+
+        $this->enableCache && $mappings = $this->cache->fetch($cacheName);
+
+        $documentReflection = new \ReflectionClass($name);
+
+        try {
+            $documentMapping = $this->getDocumentReflectionMapping($documentReflection);
+        } catch (MissingDocumentAnnotationException $exception) {
+            $documentMapping = null;
+        }
+
+        if ($documentMapping) {
+            if (!array_key_exists($documentMapping['type'], $mappings)) {
+                $documentMapping['bundle'] = $name;
+                $mappings = array_merge($mappings, [$documentMapping['type'] => $documentMapping]);
+            } else {
+                throw new \LogicException(
+                    $name . ' has 2 same type names defined in the documents. ' .
+                    'Type names must be unique!'
+                );
+            }
+        }
+
+        $this->enableCache && $this->cache->save($cacheName, $mappings);
+
+        return $mappings;
     }
 
     /**
